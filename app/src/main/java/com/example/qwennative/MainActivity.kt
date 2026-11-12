@@ -56,7 +56,7 @@ fun ChatScreen() {
     var isGenerating by remember { mutableStateOf(false) }
     var chatId by remember { mutableStateOf<String?>(null) }
     
-    // API Settings (Replace with your active tunnel when running)
+    // API Settings
     val apiBaseUrl = "https://gig-mounted-hepatitis-leading.trycloudflare.com/v1"
     val apiKey = "TPk4esc84wyzHLkqCE6FWIf9EOx39SvVATIikC_aIRg"
 
@@ -110,7 +110,7 @@ fun ChatScreen() {
             items(messages.reversed()) { msg ->
                 MessageBubble(msg = msg) { code ->
                     fileContentToSave = code
-                    filePickerLauncher.launch("code_\${System.currentTimeMillis()}.txt")
+                    filePickerLauncher.launch("code_${System.currentTimeMillis()}.txt")
                 }
                 Spacer(modifier = Modifier.height(8.dp))
             }
@@ -154,7 +154,8 @@ fun MessageBubble(msg: ChatMessage, onSaveCode: (String) -> Unit) {
         ) {
             Column {
                 Text(text = msg.content, color = Color.White, fontSize = 15.sp)
-                if (!isUser && msg.content.contains("\`\`\`")) {
+                // FIXED: Removed the backslashes
+                if (!isUser && msg.content.contains("```")) {
                     Spacer(modifier = Modifier.height(8.dp))
                     Button(
                         onClick = { onSaveCode(msg.content) },
@@ -184,7 +185,7 @@ fun sendMessageToApi(prompt: String, url: String, key: String, chatId: String?, 
         put("messages", org.json.JSONArray().put(JSONObject().apply { put("role", "user"); put("content", prompt) }))
     }
 
-    val request = Request.Builder().url("\$url/chat/completions").post(json.toString().toRequestBody("application/json".toMediaType())).header("Authorization", "Bearer \$key").build()
+    val request = Request.Builder().url("$url/chat/completions").post(json.toString().toRequestBody("application/json".toMediaType())).header("Authorization", "Bearer $key").build()
 
     CoroutineScope(Dispatchers.IO).launch {
         try {
