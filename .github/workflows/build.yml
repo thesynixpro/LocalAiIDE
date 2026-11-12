@@ -1,9 +1,13 @@
-name: Build Android APK
+name: Build and Release Android APK
 
 on:
   push:
     branches: [ "main", "master" ]
   workflow_dispatch: # Allows you to trigger the build manually from GitHub
+
+# Required to create a release and upload assets
+permissions:
+  contents: write
 
 jobs:
   build:
@@ -22,7 +26,7 @@ jobs:
     - name: Setup Gradle
       uses: gradle/actions/setup-gradle@v3
 
-    # Generates the missing gradlew file because our Python script didn't include it
+    # Generates the missing gradlew file
     - name: Generate Gradle Wrapper
       run: gradle wrapper --gradle-version 8.2
 
@@ -32,8 +36,22 @@ jobs:
     - name: Build with Gradle
       run: ./gradlew assembleDebug
 
-    - name: Upload APK
+    # Upload as a workflow artifact (optional, keeps the previous behavior)
+    - name: Upload APK Artifact
       uses: actions/upload-artifact@v4
       with:
         name: QwenNative-Debug-APK
         path: app/build/outputs/apk/debug/app-debug.apk
+
+    # NEW STEP: Create a Release and attach the APK
+    - name: Create Latest Release
+      uses: softprops/action-gh-release@v2
+      if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+      with:
+        tag_name: v1.0.${{ github.run_number }}
+        name: QwenNative Build v1.0.${{ github.run_number }}
+        body: "Automated build from commit ${{ github.sha }}"
+        draft: false
+        prerelease: false
+        make_latest: true
+        files: app/build/outputs/apk/debug/app-debug.apk
