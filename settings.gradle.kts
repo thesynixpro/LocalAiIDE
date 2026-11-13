@@ -12,5 +12,5 @@ dependencyResolutionManagement {
         mavenCentral()
     }
 }
-rootProject.name = "QwenNative"
+rootProject.name = "QweenIDE"
 include(":app")

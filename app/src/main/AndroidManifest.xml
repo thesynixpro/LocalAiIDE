@@ -7,7 +7,7 @@
     <application
         android:allowBackup="true"
         android:icon="@android:drawable/ic_menu_manage"
-        android:label="Qwen Native"
+        android:label="Qween IDE"
         android:supportsRtl="true"
         android:theme="@style/Theme.QwenNative"
         tools:targetApi="31">
