@@ -11,8 +11,8 @@ android {
         applicationId = "com.aprax.qweenide"
         minSdk = 24
         targetSdk = 34
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = 2
+        versionName = "1.1"
     }
 
     buildTypes {
@@ -45,4 +45,6 @@ dependencies {
     implementation("androidx.activity:activity-compose:1.8.2")
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.7.0")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    // Required for Native Folder Picker
+    implementation("androidx.documentfile:documentfile:1.0.1")
 }

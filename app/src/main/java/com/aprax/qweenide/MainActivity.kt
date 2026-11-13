@@ -1,7 +1,10 @@
 package com.aprax.qweenide
 
 import android.content.Context
+import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -13,6 +16,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -23,6 +27,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.documentfile.provider.DocumentFile
 import kotlinx.coroutines.*
 import okhttp3.*
 import okhttp3.MediaType.Companion.toMediaType
@@ -58,29 +63,32 @@ fun ChatScreen() {
     var modelId by remember { mutableStateOf(prefs.getString("modelId", "Qwen/Qwen2.5-Coder-7B-Instruct") ?: "") }
     var showSettings by remember { mutableStateOf(false) }
 
+    // Folder Picker State
+    var savedFolderUri by remember { mutableStateOf(prefs.getString("savedFolderUri", null)) }
+
     // Chat State
     var messages by remember { mutableStateOf(listOf<ChatMessage>()) }
     var inputText by remember { mutableStateOf("") }
     var isGenerating by remember { mutableStateOf(false) }
 
-    // 1. LOCAL BACKEND: Load history on startup
+    // Load local history
     LaunchedEffect(Unit) {
         messages = loadChatHistory(context)
     }
 
-    // File Picker for saving code
-    var fileContentToSave by remember { mutableStateOf("") }
-    val filePickerLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.CreateDocument("text/plain")
-    ) { uri ->
+    // Native Folder Picker Launcher
+    val folderPickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocumentTree()
+    ) { uri: Uri? ->
         uri?.let {
-            try {
-                context.contentResolver.openOutputStream(it)?.use { stream ->
-                    val writer = OutputStreamWriter(stream)
-                    writer.write(fileContentToSave)
-                    writer.close()
-                }
-            } catch (e: Exception) { e.printStackTrace() }
+            // Persist permission so we don't have to ask every time
+            context.contentResolver.takePersistableUriPermission(
+                it,
+                Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+            )
+            savedFolderUri = it.toString()
+            prefs.edit().putString("savedFolderUri", savedFolderUri).apply()
+            Toast.makeText(context, "Save folder connected!", Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -95,9 +103,17 @@ fun ChatScreen() {
         ) {
             Column {
                 Text("Qween IDE", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = Color.White)
-                Text("Local Storage Mode", fontSize = 12.sp, color = Color.Gray)
+                Text(if (savedFolderUri != null) "Folder Linked 📁" else "Local Storage Mode", fontSize = 12.sp, color = Color.Gray)
             }
             Row {
+                // Folder Picker Button
+                IconButton(onClick = { folderPickerLauncher.launch(null) }) {
+                    Icon(
+                        imageVector = Icons.Default.Folder, 
+                        contentDescription = "Select Folder", 
+                        tint = if (savedFolderUri != null) Color(0xFF6378ed) else Color.LightGray
+                    )
+                }
                 // Clear History Button
                 IconButton(onClick = {
                     messages = emptyList()
@@ -118,8 +134,11 @@ fun ChatScreen() {
         LazyColumn(modifier = Modifier.weight(1f), reverseLayout = true) {
             items(messages.reversed()) { msg ->
                 MessageBubble(msg = msg) { code ->
-                    fileContentToSave = code
-                    filePickerLauncher.launch("code_${System.currentTimeMillis()}.txt")
+                    if (savedFolderUri == null) {
+                        Toast.makeText(context, "Please tap the Folder icon first to select a save location", Toast.LENGTH_LONG).show()
+                    } else {
+                        saveCodeToFolder(context, savedFolderUri, code)
+                    }
                 }
                 Spacer(modifier = Modifier.height(8.dp))
             }
@@ -141,12 +160,10 @@ fun ChatScreen() {
                         val prompt = inputText
                         inputText = ""
                         
-                        // Add user message to UI and save
                         val userMsg = ChatMessage("user", prompt)
                         messages = messages + userMsg
                         saveChatHistory(context, messages)
                         
-                        // Call API
                         sendMessageToApi(
                             prompt = prompt,
                             url = baseUrl,
@@ -155,9 +172,7 @@ fun ChatScreen() {
                             context = context,
                             currentHistory = messages,
                             onLoadingChanged = { isGenerating = it },
-                            onHistoryUpdated = { updatedHistory ->
-                                messages = updatedHistory
-                            }
+                            onHistoryUpdated = { updatedHistory -> messages = updatedHistory }
                         )
                     }
                 },
@@ -187,9 +202,36 @@ fun ChatScreen() {
     }
 }
 
-// --- LOCAL FILE BACKEND ---
+// --- NATIVE FOLDER SAVE LOGIC ---
+fun saveCodeToFolder(context: Context, folderUriString: String?, content: String) {
+    if (folderUriString == null) return
+    try {
+        val folderUri = Uri.parse(folderUriString)
+        val folder = DocumentFile.fromTreeUri(context, folderUri)
+        
+        // Generate a filename
+        val fileName = "code_${System.currentTimeMillis()}.txt"
+        
+        // Create the file in the selected folder
+        val newFile = folder?.createFile("text/plain", fileName)
+        if (newFile != null) {
+            context.contentResolver.openOutputStream(newFile.uri)?.use { stream ->
+                val writer = OutputStreamWriter(stream)
+                writer.write(content)
+                writer.close()
+                Toast.makeText(context, "Saved: $fileName", Toast.LENGTH_SHORT).show()
+            }
+        } else {
+            Toast.makeText(context, "Failed to create file", Toast.LENGTH_SHORT).show()
+        }
+    } catch (e: Exception) {
+        e.printStackTrace()
+        Toast.makeText(context, "Save Error: ${e.message}", Toast.LENGTH_LONG).show()
+    }
+}
+
+// --- LOCAL FILE BACKEND (Chat History) ---
 fun getHistoryFile(context: Context): File {
-    // Path: Android/data/com.aprax.qweenide/files/chat_history.json
     val dir = context.getExternalFilesDir(null)
     if (dir != null && !dir.exists()) dir.mkdirs()
     return File(dir, "chat_history.json")
@@ -198,7 +240,6 @@ fun getHistoryFile(context: Context): File {
 fun loadChatHistory(context: Context): List<ChatMessage> {
     val file = getHistoryFile(context)
     if (!file.exists()) return emptyList()
-    
     return try {
         val list = mutableListOf<ChatMessage>()
         val jsonArray = JSONArray(file.readText())
@@ -211,9 +252,7 @@ fun loadChatHistory(context: Context): List<ChatMessage> {
             ))
         }
         list.sortedBy { it.timestamp }
-    } catch (e: Exception) {
-        emptyList()
-    }
+    } catch (e: Exception) { emptyList() }
 }
 
 fun saveChatHistory(context: Context, messages: List<ChatMessage>) {
@@ -227,38 +266,23 @@ fun saveChatHistory(context: Context, messages: List<ChatMessage>) {
             jsonArray.put(obj)
         }
         getHistoryFile(context).writeText(jsonArray.toString())
-    } catch (e: Exception) {
-        e.printStackTrace()
-    }
+    } catch (e: Exception) { e.printStackTrace() }
 }
 
 // --- NETWORKING ---
 fun sendMessageToApi(
-    prompt: String, 
-    url: String, 
-    key: String, 
-    modelId: String, 
-    context: Context,
+    prompt: String, url: String, key: String, modelId: String, context: Context,
     currentHistory: List<ChatMessage>,
     onLoadingChanged: (Boolean) -> Unit,
     onHistoryUpdated: (List<ChatMessage>) -> Unit
 ) {
     onLoadingChanged(true)
-    
-    val client = OkHttpClient.Builder()
-        .connectTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
-        .readTimeout(5, java.util.concurrent.TimeUnit.MINUTES)
-        .build()
-
+    val client = OkHttpClient.Builder().connectTimeout(30, java.util.concurrent.TimeUnit.SECONDS).readTimeout(5, java.util.concurrent.TimeUnit.MINUTES).build()
     val cleanUrl = url.trimEnd('/')
     
-    // Build conversation context for AI
     val apiMessagesArray = JSONArray()
     currentHistory.takeLast(10).forEach {
-        apiMessagesArray.put(JSONObject().apply {
-            put("role", it.role)
-            put("content", it.content)
-        })
+        apiMessagesArray.put(JSONObject().apply { put("role", it.role); put("content", it.content) })
     }
 
     val json = JSONObject().apply {
@@ -269,29 +293,17 @@ fun sendMessageToApi(
         put("messages", apiMessagesArray)
     }
 
-    val request = Request.Builder()
-        .url("$cleanUrl/chat/completions")
-        .post(json.toString().toRequestBody("application/json".toMediaType()))
-        .header("Authorization", "Bearer $key")
-        .build()
+    val request = Request.Builder().url("$cleanUrl/chat/completions").post(json.toString().toRequestBody("application/json".toMediaType())).header("Authorization", "Bearer $key").build()
 
     CoroutineScope(Dispatchers.IO).launch {
         try {
             val response = client.newCall(request).execute()
             val responseBody = response.body?.string()
-            
             withContext(Dispatchers.Main) {
                 if (response.isSuccessful && responseBody != null) {
-                    val jsonResponse = JSONObject(responseBody)
-                    val answer = jsonResponse.getJSONArray("choices")
-                        .getJSONObject(0)
-                        .getJSONObject("message")
-                        .getString("content")
-                    
+                    val answer = JSONObject(responseBody).getJSONArray("choices").getJSONObject(0).getJSONObject("message").getString("content")
                     val aiMsg = ChatMessage("assistant", answer)
                     val newHistory = currentHistory + aiMsg
-                    
-                    // Save to file and update UI instantly
                     saveChatHistory(context, newHistory)
                     onHistoryUpdated(newHistory)
                 } else {
@@ -316,11 +328,8 @@ fun sendMessageToApi(
 
 @Composable
 fun SettingsDialog(
-    currentUrl: String,
-    currentKey: String,
-    currentModel: String,
-    onDismiss: () -> Unit,
-    onSave: (String, String, String) -> Unit
+    currentUrl: String, currentKey: String, currentModel: String,
+    onDismiss: () -> Unit, onSave: (String, String, String) -> Unit
 ) {
     var url by remember { mutableStateOf(currentUrl) }
     var key by remember { mutableStateOf(currentKey) }
@@ -352,14 +361,10 @@ fun SettingsDialog(
             }
         },
         confirmButton = {
-            TextButton(onClick = { onSave(url, key, model) }) {
-                Text("Save", color = Color(0xFF6378ed))
-            }
+            TextButton(onClick = { onSave(url, key, model) }) { Text("Save", color = Color(0xFF6378ed)) }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text("Cancel", color = Color.Gray)
-            }
+            TextButton(onClick = onDismiss) { Text("Cancel", color = Color.Gray) }
         }
     )
 }
